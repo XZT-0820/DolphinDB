@@ -1,0 +1,79 @@
+// /* 1. 存放处理后的数据，例如k线、个股收益 */
+// create database "dfs://G3XuZhitong_cookedDB"
+// partitioned by VALUE(2023.08M..2023.09M), HASH([SYMBOL,256])
+// engine = "TSDB"
+
+// /*  分钟K线表 */
+// create table "dfs://G3XuZhitong_cookedDB".'min_k_line'(
+//     TradeDate DATE,
+//     SecurityID SYMBOL,
+//     MinuteStart MINUTE,
+//     Open DOUBLE,
+//     Close DOUBLE,
+//     High DOUBLE,
+//     Low DOUBLE,
+//     Volume DOUBLE,
+//     TradeValue DOUBLE
+// )
+// partitioned by TradeDate, SecurityID
+// sortColumns = `SecurityID`TradeDate`MinuteStart
+// keepDuplicates=ALL
+
+
+// /* 2. 存放计算得到的因子数据 */
+// factornames = `SVOL_10`DSVOL_10
+// create database "dfs://G3XuZhitong_FactorDB"
+// partitioned by VALUE(factornames), VALUE(2023.08M..2023.09M)
+// engine = "TSDB"
+
+// /* 2.1 因子原始值表 */
+// create table "dfs://G3XuZhitong_FactorDB".'factor_minute'(
+//     TradeDate DATE,
+//     SecurityID SYMBOL,
+//     MinuteStart MINUTE,
+//     factorname STRING,
+//     value DOUBLE
+// )
+// partitioned by factorname, TradeDate
+// sortColumns = `SecurityID`TradeDate`MinuteStart
+// keepDuplicates=ALL
+
+// /* 2.2 因子暴露表 */
+// create table "dfs://G3XuZhitong_FactorDB"."exposure_minute"(
+//     TradeDate DATE,
+//     SecurityID SYMBOL,
+//     MinuteStart MINUTE,
+//     factorname STRING,
+//     exposure DOUBLE,
+//     neutral_type STRING
+// )
+// partitioned by factorname, TradeDate
+// sortColumns = `SecurityID`TradeDate`MinuteStart
+// keepDuplicates=ALL
+
+// /* 2.3 因子表现表 */
+// create table "dfs://G3XuZhitong_FactorDB"."performance_minute"(
+//     factorname STRING,
+//     neutral_type STRING,
+//     startDate DATE,
+//     endDate DATE,
+//     holding_minutes INT,
+//     nGroups INT,
+//     weightMethod STRING,
+//     costrate DOUBLE,
+//     rf DOUBLE,
+//     IC DOUBLE,
+//     IRIC DOUBLE,
+//     rankIC DOUBLE,
+//     rankIRIC DOUBLE,
+//     TotalReturn DOUBLE,
+//     AnnualizedReturn DOUBLE,
+//     AnnualizedVolatility DOUBLE,
+//     SharpeRatio DOUBLE,
+//     annSharpeRatio DOUBLE,
+//     MaxDrawdown DOUBLE,
+//     WinRate DOUBLE
+// )
+// sortColumns = `factorname`neutral_type`startDate`endDate
+
+

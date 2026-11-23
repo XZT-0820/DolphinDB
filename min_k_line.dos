@@ -1,0 +1,30 @@
+/* ---------------NEW MODIFY----------------- */
+cuhkdb = database("dfs://cuhkDB")
+filtered_data =
+    SELECT 
+        TradeDate,
+        TradeTime,
+        SecurityID,
+        minute(TradeTime) AS MinuteStart, 
+        LastPrice,
+        TotalVolumeTrade,
+        TotalValueTrade
+    FROM cuhkdb.cuhk_snapshot
+    WHERE TradingPhaseCode=="TRADE"
+    order by TradeDate, TradeTime, SecurityID
+
+cookeddb = database("dfs://G3XuZhitong_cookedDB")
+cookeddb.min_k_line.append!(
+SELECT TradeDate,
+       SecurityID,
+       MinuteStart,
+       first(LastPrice) AS Open,
+       last(LastPrice) AS Close, 
+       max(LastPrice) AS High,
+       min(LastPrice) AS Low,
+       last(TotalVolumeTrade)-first(TotalVolumeTrade) AS Volume,
+       last(TotalValueTrade)-first(TotalValueTrade) AS TradeValue
+FROM filtered_data
+GROUP BY TradeDate, SecurityID, MinuteStart
+ORDER BY TradeDate, SecurityID, MinuteStart
+)

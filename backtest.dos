@@ -1,0 +1,189 @@
+// -------------------------------
+fname              = "VOL_log_1minret_40min"        // 因子名
+type               = "winsorized_zscore"        // 处理类型
+holding_minutes    = 20     // 持仓分钟
+nGroups            = 5                    // 分组数
+weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+costrate           = 0.000                    // 单边手续费
+universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+rf = 0.03                                  // 无风险利率
+startDate          = 2023.08.14            // 回测开始日期
+endDate            = 2023.09.14            // 回测结束日期
+// -------------------------------
+
+/* 载入因子表和分钟k线 */
+exposureTbl = loadTable("dfs://G3XuZhitong_FactorDB", "exposure_minute")   
+priceTbl    = loadTable("dfs://G3XuZhitong_cookedDB", "min_k_line")
+
+/* 取出目标因子并生成买入时间entry_dt,卖出时间exit_dt */
+exposure = select TradeDate, SecurityID, MinuteStart, factorname,exposure, neutral_type 
+            from exposureTbl 
+            where TradeDate between startDate and endDate and factorname = fname and neutral_type = type   // 根据 factorName 过滤
+
+exposure = select *, concatDateTime(TradeDate, second(time(MinuteStart))) as entry_dt from exposure
+exposure = select *, concatDateTime(TradeDate, second(time(MinuteStart+holding_minutes-1))+59) as exit_dt from exposure
+// 过滤掉开盘前、收盘后无法交易的时点
+exposure = select * from exposure where minute(exit_dt) <= 14:59m  and minute(entry_dt) >= 09:30m
+// 补充k线每一窗口的开始、结束时点
+price = select *, concatDateTime(TradeDate, second(time(MinuteStart))) as Open_dt, concatDateTime(TradeDate, second(time(MinuteStart+1))-1) as Close_dt from priceTbl
+// 因子表连接价格表，获取买入价和卖出价
+// entry price join
+entryJoin = select a.TradeDate, a.SecurityID, a.entry_dt, a.exit_dt, a.exposure, a.neutral_type
+            , p.Open  as entry_open
+            from exposure  a
+            left join price  p on a.TradeDate = p.TradeDate and a.SecurityID = p.SecurityID and a.entry_dt = p.Open_dt
+// exit price join
+fullJoin = select j.*, p.Close as exit_close
+           from entryJoin  j
+           left join price  p on j.TradeDate = p.TradeDate and j.SecurityID = p.SecurityID and j.exit_dt = p.Close_dt
+// 计算向前收益
+fullJoin = select *, 
+           iif(isNull(entry_open) or isNull(exit_close) or entry_open==0, NULL, (exit_close/entry_open - 1.0)) as fwdReturn
+           from fullJoin
+
+/* IC */
+ICTbl = select entry_dt, 
+              corr(exposure, fwdReturn)        as IC, 
+              corr(rank(exposure), rank(fwdReturn)) as rankIC,
+              count(exposure) as N
+        from fullJoin
+        group by entry_dt
+// IC统计数据
+ICStats = select 
+                avg(IC)       as meanIC,
+                std(IC)     as stdIC,
+                skew(IC)    as skewIC,
+                kurtosis(IC) as kurtosisIC,
+                avg(IC) / std(IC) * sqrt(count(IC)) as tStatIC,
+                avg(IC) / std(IC) as irIC,
+                avg(rankIC)      as meanrankIC,
+                std(rankIC)    as stdrankIC,
+                skew(rankIC)   as skewrankIC,
+                kurtosis(rankIC) as kurtosisrankIC,
+                avg(rankIC) / std(rankIC) * sqrt(count(rankIC)) as tStatrankIC,
+                avg(rankIC) / std(rankIC) as irrankIC,
+                count(entry_dt)      as numPeriods
+         from ICTbl
+
+ICmain = select  meanIC as IC, irIC as IRIC, meanrankIC as rankIC, irrankIC as rankIRIC from ICStats
+
+/* 分组收益率计算 */
+// 将每期股票按因子值分组
+grouped = select TradeDate, SecurityID, entry_dt, exposure, fwdReturn, rank(exposure,groupNum=nGroups) as group 
+          from fullJoin
+          context by entry_dt
+// 每期的组内收益率统计
+groupedSummary = select entry_dt, group, 
+                       avg(fwdReturn) as meanReturn, 
+                       std(fwdReturn) as stdReturn, 
+                       count(fwdReturn) as N
+                 from grouped
+                 group by entry_dt, group
+                 order by entry_dt, group
+// 各组收益率统计         
+groupedStats = select 
+                    group,
+                    avg(meanReturn) as avgReturnPerGroup,
+                    std(meanReturn) as stdReturnPerGroup
+               from groupedSummary
+               group by group
+
+/* 计算多空组合收益:long-short等权重 */
+if(ICStats.meanIC > 0){
+    lsSpread = select t.entry_dt, (t.meanReturn - b.meanReturn) as longShort
+           from (select entry_dt, meanReturn, group from groupedSummary where group = nGroups-1) t
+           join (select entry_dt, meanReturn, group from groupedSummary where group = 1) b
+           on t.entry_dt = b.entry_dt
+}
+else{
+    lsSpread = select t.entry_dt, (t.meanReturn - b.meanReturn) as longShort
+           from (select entry_dt, meanReturn, group from groupedSummary where group = 1) t
+           join (select entry_dt, meanReturn, group from groupedSummary where group = nGroups-1) b
+           on t.entry_dt = b.entry_dt
+}
+
+/* PNL */
+// 根据 holding_minutes 进行收益率采样
+if(holding_minutes > 1){
+    PNL = select * from
+    (select *,row_number() over (order by entry_dt) as seq
+          from lsSpread )
+    where seq % holding_minutes ==1
+}
+else{
+    PNL = select * from
+    (select *,row_number() over (order by entry_dt) as seq
+          from lsSpread )
+    
+}
+// 减去交易成本
+update PNL set longShort = longShort - 2 * costrate
+// 计算累计收益率和净值
+PNL = select *, cumprod(1+longShort) - 1 as netret from PNL
+
+/* 绩效指标计算 */
+totalperiods = size(PNL.entry_dt)         // 回测的总 period 数
+periodsPerDayTbl = select date(entry_dt), count(*) as cnt from PNL group by date(entry_dt) // 每天的 period 数
+avgPeriodsPerDay = avg(periodsPerDayTbl.cnt)  // 平均每天调仓次数
+tradingDaysPerYear = 252.0                    // 一年交易日天数
+periodsPerYear = avgPeriodsPerDay * tradingDaysPerYear // 一年 period 数
+// 1. 最大回撤
+nr = PNL.netret 
+runningMax = nr.cummax()    // 向量的累积最大值（每点之前的最高净值）
+drawdown = nr / runningMax - 1.0   // 每点的回撤
+maxDrawdown = min(drawdown)        // 最大回撤
+// 最大回撤发生时间点
+idxMaxDD = at(drawdown == maxDrawdown)
+maxDD_time = iif(size(idxMaxDD)>0, PNL.entry_dt[idxMaxDD], NULL)
+// 2. 年化
+meanPeriodReturn = avg(PNL.longShort) // 每期平均收益
+stdPeriodReturn = std(PNL.longShort)  // 单期收益标准差
+totalreturn = PNL.netret[totalperiods-1] // 回测时间段总收益率
+annVol = pow(pow(1+meanPeriodReturn,2)+pow(stdPeriodReturn,2), periodsPerYear)-pow(pow(1+meanPeriodReturn,2),periodsPerYear) // 年化波动率 
+annReturn = pow(1 + totalreturn, periodsPerYear/totalperiods) - 1.0 // 年化收益率
+// 3. 夏普比率
+rfperiod = pow(1 + rf, 1.0/periodsPerYear) - 1.0 // 每期无风险收益率
+sharpe = (meanPeriodReturn - rfperiod) / stdPeriodReturn
+annsharpe = (annReturn-rf)/annVol //年化夏普
+// 4. 胜率
+winRate = sum(PNL.longShort > 0) * 1.0 / totalperiods
+// 输出绩效指标
+performance = table(  totalreturn as TotalReturn,
+                      annReturn as AnnualizedReturn,
+                      annVol as AnnualizedVolatility,
+                      sharpe as SharpeRatio,
+                      annsharpe as annSharpeRatio,
+                      maxDrawdown as MaxDrawdown,
+                      winRate as WinRate )
+
+/* 绘图 */
+plot(PNL.netret, PNL.entry_dt)
+// plot(ICTbl.spearmanIC, ICTbl.entry_dt)
+ 
+
+/* 保存因子绩效到因子表现表 */
+upsert!(loadTable("dfs://G3XuZhitong_FactorDB", "performance_minute"), 
+        (select fname as factorname,
+               type as neutral_type,
+               startDate as startDate,
+               endDate as endDate,
+               holding_minutes as holding_minutes,
+               nGroups as nGroups,
+               weightMethod as weightMethod,
+               costrate as costrate,
+               rf as rf,
+               ICmain.IC as IC,
+               ICmain.IRIC as IRIC,
+               ICmain.rankIC as rankIC,
+               ICmain.rankIRIC as rankIRIC,
+               performance.TotalReturn as TotalReturn,
+               performance.AnnualizedReturn as AnnualizedReturn,
+               performance.AnnualizedVolatility as AnnualizedVolatility,
+               performance.SharpeRatio as SharpeRatio,
+               performance.annSharpeRatio as annSharpeRatio,
+               performance.MaxDrawdown as MaxDrawdown,
+               performance.WinRate as WinRate
+        from performance, ICmain),
+        KeyColNames=`factorname`neutral_type`startDate`endDate`holding_minutes`nGroups`weightMethod`costrate`rf
+)
+

@@ -1,0 +1,36 @@
+// select distinct SecurityID from database("dfs://cuhkDB").cuhk_snapshot
+// print(select distinct factorname from loadTable("dfs://FactorDB", "factor_minute"))
+// plot(ICTbl.rankIC, ICTbl.entry_dt)
+// delete from database("dfs://FactorDB").factor_minute where factorname = "VOL_CF_10min_8delta"
+// delete from database("dfs://FactorDB").exposure_minute where factorname = "VOL_CF_10min_8delta"
+// 示例函数1：两参数
+// select * from database("dfs://FactorDB").factor_minute where factorname = "VOL_CF_10min_8delta" and TradeDate = 2023.08.14 and SecurityID = `000225
+// t = select *, mavg(Close-prev(Close), 10) as deltaC from loadTable("dfs://cookedDB", "min_k_line") context by TradeDate,SecurityID
+// 1+1.0/8.0
+// string(8.0000)
+// deltad = log(1+1.0/8.0)
+// update t set mu = deltaC/(2*deltad), tao = deltaC/10
+// update t set VOL_CF = sqrt(2*mu*deltad/(log(deltad + mu*tao)-log(deltad - mu*tao)))
+// select distinct factorname from database("dfs://FactorDB").exposure_minute  
+// select * from database("dfs://FactorDB").exposure_minute where factorname = "CVILLIQ_10min"  
+// print(VALUE(2023.08M..2024.06M))
+// create database "dfs://G3XuZhitong_cookedDB"
+// partitioned by VALUE(2023.08M..2023.09M), HASH([SYMBOL,256])
+// engine = "TSDB"
+
+// /*  分钟K线表 */
+// create table "dfs://G3XuZhitong_cookedDB".'min_k_line'(
+//     TradeDate DATE,
+//     SecurityID SYMBOL,
+//     MinuteStart MINUTE,
+//     Open DOUBLE,
+//     Close DOUBLE,
+//     High DOUBLE,
+//     Low DOUBLE,
+//     Volume DOUBLE,
+//     TradeValue DOUBLE
+// )
+// partitioned by TradeDate, SecurityID
+// sortColumns = `SecurityID`TradeDate`MinuteStart
+// keepDuplicates=ALL
+// dropDatabase("dfs://G3XuZhitongtest_cookedDB")

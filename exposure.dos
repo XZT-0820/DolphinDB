@@ -1,0 +1,69 @@
+/* 对单个因子、单个截面做处理,分位数0.01-0.99去极值，zscore标准化 */
+def processFactor(mutable valueVec, winsorizeLower=1, winsorizeUpper=99,neutral_type="winsorized_zscore") {
+    /* 1. 去空值 */
+    valueVec_mask = isNull(valueVec)
+    valueVec = valueVec[not valueVec_mask]
+
+    if(neutral_type == "winsorized_zscore") {
+        /* 2. 去极值 */
+        lower, upper = percentile(valueVec, winsorizeLower), percentile(valueVec, winsorizeUpper)
+        valueVec = clip(valueVec, lower, upper)
+
+        /* 3. Z-score */
+        mu = avg(valueVec)
+        sigma = std(valueVec)
+        if(sigma == 0.0) return take(0.0, size(valueVec))
+        return (valueVec - mu) / sigma 
+    }
+}
+
+/* 将因子暴露存入exposure_minute表 */
+def saveFactorExposureminute(fname, type="winsorized_zscore") {
+    /* 读取因子数据 */
+    factorData = select *, type as neutral_type from database("dfs://G3XuZhitong_FactorDB").factor_minute 
+    where factorname = fname and value is not null
+
+    /* 按TradeDate,MinuteStart分组处理 */
+    processedData = select 
+        TradeDate,
+        SecurityID,
+        MinuteStart,
+        factorname,
+        processFactor(value) as exposure,
+        neutral_type
+    from factorData
+    context by TradeDate, MinuteStart
+
+    /* 保存结果到exposure_minute表 */
+    upsert!(database("dfs://G3XuZhitong_FactorDB").exposure_minute,(
+        select 
+            TradeDate,
+            SecurityID,
+            MinuteStart,
+            factorname,
+            exposure,
+            neutral_type
+        from processedData
+    ),KeyColNames=`TradeDate`SecurityID`MinuteStart`factorname`neutral_type)
+    print("已处理新因子：" + fname + ",type:" + type)
+}
+
+/* 将未按neutral_type处理的因子值处理并存入exposure_minute表 */
+factor_minute   = loadTable("dfs://G3XuZhitong_FactorDB", "factor_minute")
+exposure_minute = loadTable("dfs://G3XuZhitong_FactorDB", "exposure_minute")
+fm_set = select distinct factorname from factor_minute 
+ep_set = select distinct factorname from exposure_minute where neutral_type = "winsorized_zscore"
+missing_factors = fm_set.factorname[not fm_set.factorname in ep_set.factorname]
+if(size(missing_factors) > 0){
+    print("待处理因子列表：")
+    print(missing_factors)
+    for(fname in missing_factors){
+        saveFactorExposureminute(fname, "winsorized_zscore")
+    }
+}
+else{
+    print("无待处理因子")
+}
+
+
+

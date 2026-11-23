@@ -1,0 +1,15 @@
+pricedata = loadTable("dfs://G3XuZhitong_cookedDB", "min_k_line")
+
+// 使用timer测量因子计算时间
+timer {
+    factorload = call(VOL_CF, pricedata, 15)
+}
+
+if(factorload.factorname[0] in (select distinct factorname from loadTable("dfs://G3XuZhitong_FactorDB", "factor_minute"))){
+        print("因子 " + factorload.factorname[0] + " 已存在于因子表中，跳过添加。")
+    }
+else{
+        upsert!(loadTable("dfs://G3XuZhitong_FactorDB", "factor_minute"), factorload, KeyColNames=`TradeDate`SecurityID`MinuteStart`factorname)
+        print("因子 " + factorload.factorname[0] + " 已成功添加到因子表中。")
+    }
+

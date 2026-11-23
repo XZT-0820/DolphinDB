@@ -1,0 +1,342 @@
+//1. VOL
+def VOL_log_1minret(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    // 计算过去n分钟的收益率标准差
+    update t set VOL = mstd(ret, n) context by SecurityID, TradeDate
+
+    return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+            "VOL_log_1minret_" + string(n) + "min" as factorname, 
+            VOL as value
+    from t 
+    order by TradeDate,SecurityID,MinuteStart)
+}
+
+
+//2. dVOL
+def d_VOL_log_1minret(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    // 计算过去n分钟的收益率标准差
+    update t set VOL = mstd(ret, n) context by SecurityID, TradeDate
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "d_VOL_log_1minret_" + string(n) + "min" as factorname,
+               iif(prev(VOL) == 0.0, NULL, (VOL - prev(VOL)) / prev(VOL)) as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+// 3. VWVOL
+def VWVOL(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    t = select *, log_close - prev(log_close) as ret,
+    mavg(Volume, n) as VOLM from t 
+    context by SecurityID, TradeDate
+    order by SecurityID, TradeDate, MinuteStart
+
+    update t set VOL = mstd(ret, n) context by SecurityID, TradeDate
+
+    return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+            "VWVOL_"+string(n) + "min" as factorname, 
+            VOL * VOLM as value
+    from t 
+    order by TradeDate,SecurityID,MinuteStart)
+}
+
+// 4. upVOL
+def up_VOL_log_1minret(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    update t set up_VOL =moving(
+        defg(returns){
+        mean_return = avg(returns)
+        up_rets = max(returns - mean_return, 0)
+        return sqrt(sum2(up_rets) / (size(returns) - 1))
+    }, ret, n
+    ) context by SecurityID, TradeDate
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "up_VOL_log_1minret_" + string(n) + "min" as factorname,
+               up_VOL as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+// 5. downVOL
+def down_VOL_log_1minret(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    update t set down_VOL =moving(
+        defg(returns){
+        mean_return = avg(returns)
+        down_rets = min(returns - mean_return, 0)
+        return sqrt(sum2(down_rets) / (size(returns) - 1))
+    }, ret, n
+    ) context by SecurityID, TradeDate
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "down_VOL_log_1minret_" + string(n) + "min" as factorname,
+               down_VOL as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+//6. 
+def ratio_updown_VOL_log_1minret(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    update t set up_VOL =moving(
+        defg(returns){
+        mean_return = avg(returns)
+        up_rets = max(returns - mean_return, 0)
+        return sqrt(sum2(up_rets) / (size(returns) - 1))
+    }, ret, n
+    ) context by SecurityID, TradeDate
+    update t set down_VOL =moving(
+        defg(returns){
+        mean_return = avg(returns)
+        down_rets = min(returns - mean_return, 0)
+        return sqrt(sum2(down_rets) / (size(returns) - 1))
+    }, ret, n
+    ) context by SecurityID, TradeDate
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "ratio_updown_VOL_log_1minret_" + string(n) + "min" as factorname,
+               iif(down_VOL == 0.0, NULL, up_VOL / down_VOL) as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+// 7. 
+def VOL_ratio_1minhighlow(pricedata, n){
+    t = select *, iif(Low>0, High/Low, NULL) as high_low_ratio from pricedata 
+    update t set VOL_hl = mstd(high_low_ratio, n) context by SecurityID, TradeDate
+    return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+            "VOL_ratio_1minhighlow_" + string(n) + "min" as factorname, 
+            VOL_hl as value
+            from t 
+            order by TradeDate,SecurityID,MinuteStart)
+}  
+
+// 8.
+def d_up_VOL_log_1minret(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    update t set up_VOL =moving(
+        defg(returns){
+        mean_return = avg(returns)
+        up_rets = max(returns - mean_return, 0)
+        return sqrt(sum2(up_rets) / (size(returns) - 1))
+    }, ret, n
+    ) context by SecurityID, TradeDate
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "d_up_VOL_log_1minret_" + string(n) + "min" as factorname,
+               iif(prev(up_VOL) == 0.0, NULL, (up_VOL - prev(up_VOL)) / prev(up_VOL)) as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+// 9.
+def d_down_VOL_log_1minret(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    update t set down_VOL =moving(
+        defg(returns){
+        mean_return = avg(returns)
+        down_rets = min(returns - mean_return, 0)
+        return sqrt(sum2(down_rets) / (size(returns) - 1))
+    }, ret, n
+    ) context by SecurityID, TradeDate
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "d_down_VOL_log_1minret_" + string(n) + "min" as factorname,
+               iif(prev(down_VOL) == 0.0, NULL, (down_VOL - prev(down_VOL)) / prev(down_VOL)) as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+// 10. 
+def VOL_1minvolm(pricedata, n){
+    t = select *, mstd(Volume, n) as VOL from pricedata context by SecurityID, TradeDate
+    return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+            "VOL_1minvolm_" + string(n) + "min" as factorname, 
+            VOL as value
+            from t 
+            order by TradeDate,SecurityID,MinuteStart)
+    }
+
+// 11. 
+def CVILLIQ(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    update t set ILLIQ = iif(TradeValue > 0, abs(ret)/ TradeValue, NULL) context by SecurityID, TradeDate
+    update t set CVILLIQ = iif(mavg(ILLIQ, n) > 0,mstd(ILLIQ, n)/mavg(ILLIQ, n), NULL) context by SecurityID, TradeDate
+    return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+            "CVILLIQ_" + string(n) + "min" as factorname, 
+            CVILLIQ as value
+            from t 
+            order by TradeDate,SecurityID,MinuteStart)
+}
+
+//12. 
+def AMP_HIGH(pricedata, n, lam = 0.25){
+    t = select *, iif(Low>0, High/Low-1, NULL) as amp from pricedata
+    update t set amp_high = 1/(n*lam)*msumTopN(amp, Close, window=n, top=int(n*lam), ascending=false) context by SecurityID, TradeDate
+    return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+            "AMP_HIGH_" + string(n) + "min" + "_"+string(lam) +"lam" as factorname, 
+            amp_high as value
+            from t 
+            order by TradeDate,SecurityID,MinuteStart)
+}   
+//13. 
+def AMP_LOW(pricedata, n, lam = 0.25){
+    t = select *, iif(Low>0, High/Low-1, NULL) as amp from pricedata
+    update t set amp_low  = 1/(n*lam)*msumTopN(amp, Close, window=n, top=int(n*lam), ascending=true) context by SecurityID, TradeDate
+    return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+            "AMP_LOW_" + string(n) + "min" + "_"+string(lam) +"lam" as factorname, 
+            amp_low as value
+            from t 
+            order by TradeDate,SecurityID,MinuteStart)
+    }
+// 14.
+def AMP_range(pricedata, n, lam = 0.25){
+    t = select *, iif(Low>0, High/Low-1, NULL) as amp from pricedata
+    update t set amp_high = 1/(n*lam)*msumTopN(amp, Close, window=n, top=int(n*lam), ascending=false) context by SecurityID, TradeDate
+    update t set amp_low  = 1/(n*lam)*msumTopN(amp, Close, window=n, top=int(n*lam), ascending=true) context by SecurityID, TradeDate
+    return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+            "AMP_range_" + string(n) + "min" + "_" + string(lam) + "lam" as factorname, 
+            (amp_high - amp_low) as value
+            from t 
+            order by TradeDate,SecurityID,MinuteStart)
+}
+
+//15. 
+def VOL_upd_log_1minret(pricedata, n){
+    t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+    // 计算对数收益率
+    update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+    update t set up_VOL =moving(
+        defg(returns){
+        mean_return = avg(returns)
+        up_rets = max(returns - mean_return, 0)
+        return sqrt(sum2(up_rets) / (size(returns) - 1))
+    }, ret, n
+    ) context by SecurityID, TradeDate
+    update t set down_VOL =moving(
+        defg(returns){
+        mean_return = avg(returns)
+        down_rets = min(returns - mean_return, 0)
+        return sqrt(sum2(down_rets) / (size(returns) - 1))
+    }, ret, n
+    ) context by SecurityID, TradeDate
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "VOL_upd_log_1minret_" + string(n) + "min" as factorname,
+               up_VOL + down_VOL as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+//16. 
+def VOL_Parkinson(pricedata, n){
+    t = select *, iif(Low>0,pow(log(High/Low), 2),NULL) as VOL_P from pricedata 
+    update t set VOL_P = sqrt(msum(VOL_P, n)/(4*n*log(2))) context by TradeDate, SecurityID
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "VOL_Parkinson_" + string(n) + "min" as factorname,
+               VOL_P as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+//17. 
+def VOL_GK(pricedata, n){
+    t = select *, iif(Low>0 and Open>0, pow(log(High/Low), 2) / 2 - (2*log(2)-1)*pow(log(Close/Open), 2),NULL) 
+    as VOL_GK from pricedata
+    update t set VOL_GK = sqrt(msum(VOL_GK, n) / n) context by TradeDate, SecurityID
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "VOL_GK_" + string(n) + "min" as factorname,
+               VOL_GK as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+// 18.
+def VOL_RS(pricedata, n){
+    t = select *, iif(Close>0 and Open>0, log(High/Close)*log(High/Open)+log(Low/Close)*log(Low/Open),NULL)
+    as VOL_RS from pricedata
+    update t set VOL_RS = sqrt(msum(VOL_RS, n)/n) context by TradeDate,SecurityID
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "VOL_RS_" + string(n) + "min" as factorname,
+               VOL_RS as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+//19. 
+def VOL_YZ(pricedata, n, alpha = 0.34){
+    k = alpha / (1+alpha+(n+1)/(n-1))
+    t = select *, iif(Close>0 and Open>0, log(High/Close)*log(High/Open)+log(Low/Close)*log(Low/Open),NULL)
+    as VOL_RS,
+    iif(prev(Close)>0, log(Open/prev(Close)), NULL) as VOL_O,
+    iif(prev(Open)>0, log(Close/prev(Open)), NULL) as VOL_C
+    from pricedata context by TradeDate,SecurityID
+    update t set VOL_RS = msum(VOL_RS, n)/n context by TradeDate,SecurityID
+    update t set VOL_YZ = sqrt( msum(VOL_O, n) + k*msum(VOL_C,n) + (1-k)*VOL_RS ) context by TradeDate,SecurityID
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "VOL_YZ_" + string(n) + "min" + "_" + string(alpha) + "alpha" as factorname,
+               VOL_YZ as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}
+
+//20.
+def VOL_CF(pricedata, n, delta = 8.0){
+    deltad = log(1+1/delta)
+    t = select *, mavg(Close-prev(Close), n) as deltaC from pricedata context by TradeDate,SecurityID
+    update t set mu = deltaC/(2*deltad), tao = deltaC/n
+    update t set VOL_CF = sqrt(2*mu*deltad/(log(deltad + mu*tao)-log(deltad - mu*tao)))
+    return (select
+               TradeDate,
+               SecurityID,
+               MinuteStart + 1 AS MinuteStart,
+               "VOL_CF_" + string(n) + "min" + "_" + string(delta) + "delta" as factorname,
+               VOL_CF as value
+           from t
+           order by TradeDate,SecurityID,MinuteStart)
+}

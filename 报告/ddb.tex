@@ -1,0 +1,1907 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{mathtools}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{thmtools}
+\usepackage{xcolor}
+\usepackage{nameref}
+\usepackage{float}
+\usepackage{booktabs}
+
+%下面的是配置是可以写中文注释的python环境:
+\usepackage{listings}
+\usepackage{color}
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+\lstset{frame=tb,
+	language=Python,
+	aboveskip=3mm,
+	belowskip=3mm,
+	showstringspaces=false,
+	columns=flexible,
+	basicstyle={\small\ttfamily},
+	numbers=left,%设置行号位置none不显示行号
+	%numberstyle=\tiny\courier, %设置行号大小  
+	numberstyle=\tiny\color{gray},
+	keywordstyle=\color{blue},
+	commentstyle=\color{dkgreen},
+	stringstyle=\color{mauve},
+	breaklines=true,
+	breakatwhitespace=true,
+	escapeinside=``,%逃逸字符(1左面的键)，用于显示中文例如在代码中`中文...`
+	tabsize=4,
+	extendedchars=false} %解决代码跨页时，章节标题，页眉等汉字不显示的问题  
+\usepackage{ctex}
+
+
+\begin{document}
+	\setcounter{page}{44}
+	\section*{（三）High frequency volatility factor: Xu Zhitong}
+	
+	
+	\subsection*{1. return volatility}
+	formula：
+	\[
+	\mathrm{VOL}_t = \sqrt{\frac{1}{n-1} \sum_{i=1}^{n} (r_{t-i} - \bar{r})^2 }
+	\]
+	
+	codes：
+	\begin{lstlisting}
+		def VOL_log_1minret(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			// 计算过去n分钟的收益率标准差
+			update t set VOL = mstd(ret, n) context by SecurityID, TradeDate
+			
+			return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+			"VOL_log_1minret_" + string(n) + "min" as factorname, 
+			VOL as value
+			from t 
+			order by TradeDate,SecurityID,MinuteStart)
+			
+		}
+	\end{lstlisting}
+	
+	settings：
+	\begin{lstlisting}
+	// -------------------------------
+	fname              = "VOL_log_1minret_10min"        // 因子名
+	type               = "winsorized_zscore"        // 处理类型
+	holding_minutes    = 10     // 持仓分钟
+	nGroups            = 5                    // 分组数
+	weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+	costrate           = 0.000                    // 单边手续费
+	universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+	rf = 0.03                                  // 无风险利率
+	startDate          = 2023.08.14            // 回测开始日期
+	endDate            = 2023.09.14            // 回测结束日期
+	// -------------------------------
+	\end{lstlisting}
+	
+	\textbf{--- n  = 10, holding 10min }
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/caa29715d889e733ad9ccff111406e2f}
+		\caption{}
+		\label{fig:caa29715d889e733ad9ccff111406e2f}
+	\end{figure}
+
+	IC:
+	\begin{table}[h!]
+		\begin{tabular}{@{}|c|c|c|c|@{}}
+			\toprule
+			IC                & IRIC               & rankIC            & rankIRIC           \\ \midrule
+			-0.00188708234773 & -0.024952891418766 & -0.00228016364413 & -0.026714658841357 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Performance:
+	\begin{table}[h!]
+		\begin{tabular}{@{}|l|l|lllll@{}}
+			\cmidrule(r){1-5}
+			TotalReturn                              & AnnualizedReturn  & \multicolumn{1}{l|}{AnnualizedVolatility} & \multicolumn{1}{l|}{SharpeRatio}       & \multicolumn{1}{l|}{annSharpeRatio}    &                      &  \\ \cmidrule(r){1-5}
+			0.021502543728856                        & 0.307425950353025 & \multicolumn{1}{l|}{0.043631731907627}    & \multicolumn{1}{l|}{0.071392607035012} & \multicolumn{1}{l|}{6.358352928560433} & \multicolumn{1}{c}{} &  \\ \cmidrule(r){1-5}
+			MaxDrawdown                              & WinRate           &                                           &                                        &                                        &                      &  \\ \cmidrule(r){1-2}
+			\multicolumn{1}{|c|}{-8.051383885896076} & 0.492537313432836 &                                           &                                        &                                        &                      &  \\ \cmidrule(r){1-2}
+		\end{tabular}
+	\end{table}
+	
+	
+	\subsection*{2. volatility change rate}
+	formula：
+	\[d \text{VOL}_t = \frac{\text{VOL}_t - \text{VOL}_{t-1}}{\text{VOL}_{t-1}}\]
+	
+	codes：
+	\begin{lstlisting}
+		def d_VOL_log_1minret(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			// 计算过去n分钟的收益率标准差
+			update t set VOL = mstd(ret, n) context by SecurityID, TradeDate
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"d_VOL_log_1minret_" + string(n) + "min" as factorname,
+			(VOL - prev(VOL)) / prev(VOL) as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+	
+	settings：
+	\begin{lstlisting}
+		// -------------------------------
+		fname              = "d_VOL_log_1minret_10min"        // 因子名
+		type               = "winsorized_zscore"        // 处理类型
+		holding_minutes    = 10     // 持仓分钟
+		nGroups            = 5                    // 分组数
+		weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+		costrate           = 0.000                    // 单边手续费
+		universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+		rf = 0.03                                  // 无风险利率
+		startDate          = 2023.08.14            // 回测开始日期
+		endDate            = 2023.09.14            // 回测结束日期
+		// -------------------------------
+	\end{lstlisting}
+	
+	\textbf{--- n = 10，holding 10min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/ad6789cfa45827637ab162e9b6340f29}
+		\caption{}
+		\label{fig:ad6789cfa45827637ab162e9b6340f29}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|l|l|@{}}
+			\toprule
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \midrule
+			0.000839654402304 & 0.028056791779799 & 0.006890908349872 & 0.189811517259806 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Performance:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|lllll@{}}
+			\cmidrule(r){1-5}
+			TotalReturn        & AnnualizedReturn  & \multicolumn{1}{l|}{AnnualizedVolatility} & \multicolumn{1}{l|}{SharpeRatio}       & \multicolumn{1}{l|}{annSharpeRatio}     &  &  \\ \cmidrule(r){1-5}
+			0.032391429096078  & 0.494305237908612 & \multicolumn{1}{l|}{0.027258328304257}    & \multicolumn{1}{l|}{0.182524808936017} & \multicolumn{1}{l|}{17.033518443466068} &  &  \\ \cmidrule(r){1-5}
+			MaxDrawdown        & WinRate           &                                           &                                        &                                         &  &  \\ \cmidrule(r){1-2}
+			-3.413654821159183 & 0.559284116331096 &                                           &                                        &                                         &  &  \\ \cmidrule(r){1-2}
+		\end{tabular}
+	\end{table}
+	
+	\textbf{--- n = 10, holding 1min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/3fbde53d02c4b202a0c2535bfce73546}
+		\caption{}
+		\label{fig:3fbde53d02c4b202a0c2535bfce73546}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|l|l|@{}}
+			\toprule
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \midrule
+			0.001746177924517 & 0.053276011724966 & 0.028187830973118 & 0.817093265311109 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|lllll@{}}
+			\cmidrule(r){1-5}
+			TotalReturn        & AnnualizedReturn  & \multicolumn{1}{l|}{AnnualizedVolatility} & \multicolumn{1}{l|}{SharpeRatio}       & \multicolumn{1}{l|}{annSharpeRatio}     &  &  \\ \cmidrule(r){1-5}
+			0.07325937379997   & 1.437132254765351 & \multicolumn{1}{l|}{0.04310778889541}     & \multicolumn{1}{l|}{0.082792149242484} & \multicolumn{1}{l|}{32.642181165435985} &  &  \\ \cmidrule(r){1-5}
+			MaxDrawdown        & WinRate           &                                           &                                        &                                         &  &  \\ \cmidrule(r){1-2}
+			-1.332703392551822 & 0.542924935289042 &                                           &                                        &                                         &  &  \\ \cmidrule(r){1-2}
+		\end{tabular}
+	\end{table}
+	
+	\textbf{--- n = 3, holding 1min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/adeeeefefcefe3e03966f6c6a186b332}
+		\caption{}
+		\label{fig:adeeeefefcefe3e03966f6c6a186b332}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|l|l|@{}}
+			\toprule
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \midrule
+			0.001724139017955 & 0.060660048099756 & 0.030967712544059 & 0.999444677453455 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|lllll@{}}
+			\cmidrule(r){1-5}
+			TotalReturn        & AnnualizedReturn  & \multicolumn{1}{l|}{AnnualizedVolatility} & \multicolumn{1}{l|}{SharpeRatio}      & \multicolumn{1}{l|}{annSharpeRatio}    &  &  \\ \cmidrule(r){1-5}
+			0.114709252631569  & 2.928585737177374 & \multicolumn{1}{l|}{0.034516838555881}    & \multicolumn{1}{l|}{0.15872501267098} & \multicolumn{1}{l|}{83.97599138416848} &  &  \\ \cmidrule(r){1-2}
+			-4.185429812331221 & 0.564199873497786 &                                           &                                       &                                        &  &  \\ \cmidrule(r){1-2}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{3. volume-weighted volatility}
+	
+	formula：
+	
+	\[
+	\text{VWVOL}_{t} = \text{VOL}_{t} \times \text{VOLM}_{t}
+	\]
+	
+	\[
+	\text{VOLM}_{t} = \frac{1}{n} \sum_{i=1}^{n} V_{t-i}
+	\]
+	
+	$V_{t}$: Volume \\
+	\indent $\text{VOLM}_{t}$: n-period average volume
+	\\
+	\\
+	\indent codes：
+	\begin{lstlisting}
+		def VWVOL(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata order by SecurityID, TradeDate, MinuteStart
+			t = select *, log_close - prev(log_close) as ret,
+			mavg(Volume, n) as VOLM from t 
+			context by SecurityID, TradeDate
+			order by SecurityID, TradeDate, MinuteStart
+			
+			update t set VOL = mstd(ret, n) context by SecurityID, TradeDate
+			
+			return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+			"VWVOL_"+string(n) + "min" as factorname, 
+			VOL * VOLM as value
+			from t 
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+	
+	settings：
+	\begin{lstlisting}
+		// -------------------------------
+		fname              = "VWVOL_3min"        // 因子名
+		type               = "winsorized_zscore"        // 处理类型
+		holding_minutes    = 1     // 持仓分钟
+		nGroups            = 5                    // 分组数
+		weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+		costrate           = 0.000                    // 单边手续费
+		universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+		rf = 0.03                                  // 无风险利率
+		startDate          = 2023.08.14            // 回测开始日期
+		endDate            = 2023.09.14            // 回测结束日期
+		// -------------------------------
+	\end{lstlisting}
+	
+	\textbf{--- n = 3, holding 1min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/36a26be6104a7f0063fe2090f5bef7c6}
+		\caption{}
+		\label{fig:36a26be6104a7f0063fe2090f5bef7c6}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|l|l|@{}}
+			\toprule
+			IC               & IRIC              & rankIC           & rankIRIC          \\ \midrule
+			0.00283069116429 & 0.065359874451965 & 0.08732514418176 & 1.354962468993434 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|lllll@{}}
+			\cmidrule(r){1-5}
+			TotalReturn        & AnnualizedReturn  & \multicolumn{1}{l|}{AnnualizedVolatility} & \multicolumn{1}{l|}{SharpeRatio}       & \multicolumn{1}{l|}{annSharpeRatio}     &  &  \\ \cmidrule(r){1-5}
+			0.13622630657231   & 3.998698988526077 & \multicolumn{1}{l|}{0.04603116519486}     & \multicolumn{1}{l|}{0.140057829328051} & \multicolumn{1}{l|}{86.217652143405786} &  &  \\ \cmidrule(r){1-5}
+			MaxDrawdown        & WinRate           &                                           &                                        &                                         &  &  \\ \cmidrule(r){1-2}
+			-1.774670465496029 & 0.561517501571998 &                                           &                                        &                                         &  &  \\ \cmidrule(r){1-2}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{4.upside volatility}
+	formula：
+	\[ \text{UpVol}_t = \sqrt{\frac{1}{n-1} \sum_{i=1}^{n} \left[\max\left(r_{t-i}-\bar{r}, 0\right)\right]^2} \]
+	
+	codes：
+	\begin{lstlisting}
+		def up_VOL_log_1minret(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			update t set up_VOL =moving(
+			defg(returns){
+				mean_return = avg(returns)
+				up_rets = max(returns - mean_return, 0)
+				return sqrt(sum2(up_rets) / (size(returns) - 1))
+			}, ret, n
+			) context by SecurityID, TradeDate
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"up_VOL_log_1minret_" + string(n) + "min" as factorname,
+			up_VOL as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+	
+	settings：
+	\begin{lstlisting}
+		// -------------------------------
+		fname              = "up_VOL_log_1minret_10min"        // 因子名
+		type               = "winsorized_zscore"        // 处理类型
+		holding_minutes    = 10     // 持仓分钟
+		nGroups            = 5                    // 分组数
+		weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+		costrate           = 0.000                    // 单边手续费
+		universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+		rf = 0.03                                  // 无风险利率
+		startDate          = 2023.08.14            // 回测开始日期
+		endDate            = 2023.09.14            // 回测结束日期
+		// -------------------------------
+	\end{lstlisting}
+	
+	\textbf{--- n = 10, holding 10min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/afbe79a1ce8e2d9fca632472bed5675b}
+		\caption{}
+		\label{fig:afbe79a1ce8e2d9fca632472bed5675b}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{@{}|l|l|l|l|@{}}
+			\toprule
+			IC                 & IRIC               & rankIC             & rankIRIC           \\ \midrule
+			-0.010121675009353 & -0.134361175409541 & -0.011770934742972 & -0.137015946799456 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{@{}|c|c|c|llll@{}}
+			\cmidrule(r){1-4}
+			TotalReturn        & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cmidrule(r){1-4}
+			0.041254201599731  & 0.664237341717002  & 0.041932659202409    & \multicolumn{1}{c|}{0.149127021583295} &  &  &  \\ \cmidrule(r){1-4}
+			annSharpeRatio     & MaxDrawdown        & WinRate              &                                        &  &  &  \\ \cmidrule(r){1-3}
+			15.125140016890968 & -2.149336005635333 & 0.556503198294243    &                                        &  &  &  \\ \cmidrule(r){1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{5.downside volatility}
+	formula：
+	\[ \text{DownVol}_t = \sqrt{\frac{1}{n-1} \sum_{i=1}^{n} \left[\min\left(r_{t-i}-\bar{r}, 0\right)\right]^2} \]
+	
+	codes：
+	\begin{lstlisting}
+		def down_VOL_log_1minret(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			update t set down_VOL =moving(
+			defg(returns){
+				mean_return = avg(returns)
+				down_rets = min(returns - mean_return, 0)
+				return sqrt(sum2(down_rets) / (size(returns) - 1))
+			}, ret, n
+			) context by SecurityID, TradeDate
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"down_VOL_log_1minret_" + string(n) + "min" as factorname,
+			down_VOL as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+	
+	settings：
+	\begin{lstlisting}
+		// -------------------------------
+		fname              = "down_VOL_log_1minret_10min"        // 因子名
+		type               = "winsorized_zscore"        // 处理类型
+		holding_minutes    = 10     // 持仓分钟
+		nGroups            = 5                    // 分组数
+		weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+		costrate           = 0.000                    // 单边手续费
+		universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+		rf = 0.03                                  // 无风险利率
+		startDate          = 2023.08.14            // 回测开始日期
+		endDate            = 2023.09.14            // 回测结束日期
+		// -------------------------------
+	\end{lstlisting}
+	
+	\textbf{--- n = 10, holding 10min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/1b99cfe0ffbb38031bee3ae46bd54965}
+		\caption{}
+		\label{fig:1b99cfe0ffbb38031bee3ae46bd54965}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{@{}|c|c|c|c|@{}}
+			\toprule
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \midrule
+			0.006919078166903 & 0.093746464881576 & 0.008184594569774 & 0.096417462415866 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{@{}|c|c|c|llll@{}}
+			\cmidrule(r){1-4}
+			TotalReturn       & AnnualizedReturn  & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cmidrule(r){1-4}
+			0.00473118711678  & 0.061276449037412 & 0.043039898449811    & \multicolumn{1}{c|}{0.009320711705703} &  &  &  \\ \cmidrule(r){1-4}
+			annSharpeRatio    & MaxDrawdown       & WinRate              &                                        &  &  &  \\ \cmidrule(r){1-3}
+			0.726685010046734 & -0.93010983757438 & 0.509594882729211    &                                        &  &  &  \\ \cmidrule(r){1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{6. upside-to-downside volatility ratio}
+	formula：
+	\[ \text{Ratio}_t = \text{UpVol}_t / \text{DownVol}_t \]
+	
+	codes：
+	\begin{lstlisting}
+		def ratio_updown_VOL_log_1minret(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			update t set up_VOL =moving(
+			defg(returns){
+				mean_return = avg(returns)
+				up_rets = max(returns - mean_return, 0)
+				return sqrt(sum2(up_rets) / (size(returns) - 1))
+			}, ret, n
+			) context by SecurityID, TradeDate
+			update t set down_VOL =moving(
+			defg(returns){
+				mean_return = avg(returns)
+				down_rets = min(returns - mean_return, 0)
+				return sqrt(sum2(down_rets) / (size(returns) - 1))
+			}, ret, n
+			) context by SecurityID, TradeDate
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"ratio_updown_VOL_log_1minret_" + string(n) + "min" as factorname,
+			iif(down_VOL == 0.0, NULL, up_VOL / down_VOL) as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+	
+	settings：
+	\begin{lstlisting}
+		// -------------------------------
+		fname              = "ratio_updown_VOL_log_1minret_10min"        // 因子名
+		type               = "winsorized_zscore"        // 处理类型
+		holding_minutes    = 10     // 持仓分钟
+		nGroups            = 5                    // 分组数
+		weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+		costrate           = 0.000                    // 单边手续费
+		universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+		rf = 0.03                                  // 无风险利率
+		startDate          = 2023.08.14            // 回测开始日期
+		endDate            = 2023.09.14            // 回测结束日期
+		// -------------------------------
+	\end{lstlisting}
+	
+	\textbf{--- n = 10, holding 10min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/190b5b61872b38570be015551e25d0b5}
+		\caption{}
+		\label{fig:190b5b61872b38570be015551e25d0b5}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{@{}|c|c|c|c|@{}}
+			\toprule
+			IC                 & IRIC               & rankIC             & rankIRIC           \\ \midrule
+			-0.033163741467624 & -0.970493748109474 & -0.037855905546208 & -0.944713239203423 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{@{}|c|c|c|llll@{}}
+			\cmidrule(r){1-4}
+			TotalReturn        & AnnualizedReturn  & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cmidrule(r){1-4}
+			0.050365307120082  & 0.857328178006879 & 0.024078029676648    & \multicolumn{1}{c|}{0.318736512346863} &  &  &  \\ \cmidrule(r){1-4}
+			annSharpeRatio     & MaxDrawdown       & WinRate              &                                        &  &  &  \\ \cmidrule(r){1-3}
+			34.360293974106447 & -2.89220847266639 & 0.668789808917197    &                                        &  &  &  \\ \cmidrule(r){1-3}
+		\end{tabular}
+	\end{table}
+	
+	\textbf{--- n = 5, holding 3min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/8e3b24f473e56a7e9ac2067286fd16ba}
+		\caption{}
+		\label{fig:8e3b24f473e56a7e9ac2067286fd16ba}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{@{}|c|c|c|c|@{}}
+			\toprule
+			IC                 & IRIC               & rankIC             & rankIRIC           \\ \midrule
+			-0.045325815142746 & -1.402340746822036 & -0.037212014697493 & -1.001792441757374 \\ \bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{@{}|c|c|c|llll@{}}
+			\cmidrule(r){1-4}
+			TotalReturn         & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cmidrule(r){1-4}
+			0.191543976217844   & 8.098859326990554  & 0.025882172224143    & \multicolumn{1}{c|}{0.597261982065946} &  &  &  \\ \cmidrule(r){1-4}
+			annSharpeRatio      & MaxDrawdown        & WinRate              &                                        &  &  &  \\ \cmidrule(r){1-3}
+			311.753559829254982 & -1.006866578985508 & 0.775523145212429    &                                        &  &  &  \\ \cmidrule(r){1-3}
+		\end{tabular}
+	\end{table}
+	\subsection*{7. high-low-ratio volatility}
+	formula：
+	\[ \text{VOL}_t = \text{ std}_{i=1}^{n}(\text{High}_{t-i}/\text{low}_{t-i}) \]
+	
+	codes：
+	\begin{lstlisting}
+		def VOL_ratio_1minhighlow(pricedata, n){
+			t = select *, iif(Low>0, High/Low, NULL) as high_low_ratio from pricedata 
+			update t set VOL_hl = mstd(high_low_ratio, n) context by SecurityID, TradeDate
+			return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+			"VOL_ratio_1minhighlow_" + string(n) + "min" as factorname, 
+			VOL_hl as value
+			from t 
+			order by TradeDate,SecurityID,MinuteStart)
+		}   
+	\end{lstlisting}
+	
+	settings：
+	\begin{lstlisting}
+		// -------------------------------
+		fname              = "VOL_ratio_1minhighlow_5min"        // 因子名
+		type               = "winsorized_zscore"        // 处理类型
+		holding_minutes    = 1     // 持仓分钟
+		nGroups            = 5                    // 分组数
+		weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+		costrate           = 0.000                    // 单边手续费
+		universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+		rf = 0.03                                  // 无风险利率
+		startDate          = 2023.08.14            // 回测开始日期
+		endDate            = 2023.09.14            // 回测结束日期
+		// -------------------------------
+		
+	\end{lstlisting}
+	
+	\textbf{--- n = 5, holding 1min}
+	\\
+	\\
+	\indent PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{C:/Users/17386/Desktop/830854987306a2f1eb7d3e0e9b524aff}
+		\caption{}
+		\label{fig:830854987306a2f1eb7d3e0e9b524aff}
+	\end{figure}
+	
+	IC: 
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \hline
+			0.002263098658621 & 0.047366823164733 & 0.074421317156508 & 1.609045139344128 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn        & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}      &  &  &  \\ \cline{1-4}
+			0.056505550111418  & 0.99886960472456   & 0.042266820190742    & \multicolumn{1}{c|}{0.06352877445324} &  &  &  \\ \cline{1-4}
+			annSharpeRatio     & MaxDrawdown        & WinRate              &                                       &  &  &  \\ \cline{1-3}
+			22.922699184661347 & -0.254503210752219 & 0.522464962901896    &                                       &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\textbf{---The following factors are all configured with ：n = 10, holding 10min}
+	\subsection*{8. upside volatility change rate}
+	codes：
+	\begin{lstlisting}
+		def d_up_VOL_log_1minret(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			update t set up_VOL =moving(
+			defg(returns){
+				mean_return = avg(returns)
+				up_rets = max(returns - mean_return, 0)
+				return sqrt(sum2(up_rets) / (size(returns) - 1))
+			}, ret, n
+			) context by SecurityID, TradeDate
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"d_up_VOL_log_1minret_" + string(n) + "min" as factorname,
+			iif(prev(up_VOL) == 0.0, NULL, (up_VOL - prev(up_VOL)) / prev(up_VOL)) as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+	
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/241861265ebb7c38ed350c50718f1bdb"}
+		\caption{}
+		\label{fig:241861265ebb7c38ed350c50718f1bdb}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                 & IRIC               & rankIC            & rankIRIC          \\ \hline
+			-0.009710797850301 & -0.338021630993574 & 0.011220796857956 & 0.310774075550912 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn          & AnnualizedReturn    & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}        &  &  &  \\ \cline{1-4}
+			-0.037876187810462   & -0.385233577786621  & 0.000164006315899    & \multicolumn{1}{c|}{-0.329719306115275} &  &  &  \\ \cline{1-4}
+			annSharpeRatio       & MaxDrawdown         & WinRate              &                                         &  &  &  \\ \cline{1-3}
+			-2531.81455549035536 & -51.545620468185404 & 0.339285714285714    &                                         &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{9. downside volatility change rate}
+	codes：
+	\begin{lstlisting}
+		def d_down_VOL_log_1minret(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			update t set down_VOL =moving(
+			defg(returns){
+				mean_return = avg(returns)
+				down_rets = min(returns - mean_return, 0)
+				return sqrt(sum2(down_rets) / (size(returns) - 1))
+			}, ret, n
+			) context by SecurityID, TradeDate
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"d_down_VOL_log_1minret_" + string(n) + "min" as factorname,
+			iif(prev(down_VOL) == 0.0, NULL, (down_VOL - prev(down_VOL)) / prev(down_VOL)) as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/d8513dc18378ff1b1e40c09b4079541e"}
+		\caption{}
+		\label{fig:d8513dc18378ff1b1e40c09b4079541e}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \hline
+			0.010884590461723 & 0.374297787335604 & 0.000281887426367 & 0.007896757793454 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn          & AnnualizedReturn    & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}        &  &  &  \\ \cline{1-4}
+			-0.022885009084817   & -0.253008738690923  & 0.000445121693396    & \multicolumn{1}{c|}{-0.151340809895276} &  &  &  \\ \cline{1-4}
+			annSharpeRatio       & MaxDrawdown         & WinRate              &                                         &  &  &  \\ \cline{1-3}
+			-635.800822314434753 & -17.660335534440363 & 0.405345211581292    &                                         &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{10. Volume Volatility}
+	codes：
+	\begin{lstlisting}
+		def VOL_1minvolm(pricedata, n){
+			t = select *, mstd(Volume, n) as VOL from pricedata context by SecurityID, TradeDate
+			return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+			"VOL_1minvolm_" + string(n) + "min" as factorname, 
+			VOL as value
+			from t 
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/ceb1c26c567fc557385a877e6c20a93c"}
+		\caption{}
+		\label{fig:ceb1c26c567fc557385a877e6c20a93c}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                 & IRIC               & rankIC            & rankIRIC          \\ \hline
+			-0.000719104457026 & -0.017164640787956 & 0.009429814711688 & 0.116428058103167 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn         & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}        &  &  &  \\ \cline{1-4}
+			-0.011930982473838  & -0.140353801321837 & 0.001567232735251    & \multicolumn{1}{c|}{-0.050798864279296} &  &  &  \\ \cline{1-4}
+			annSharpeRatio      & MaxDrawdown        & WinRate              &                                         &  &  &  \\ \cline{1-3}
+			-108.69719441799171 & -2.340248295101614 & 0.457446808510638    &                                         &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{11. illiquidity coefficient of variation}
+	formula:
+	\[
+	\text{ILLIQ}_{it} = \frac{|r_{itl}|}{v_{itl}}
+	\]
+	
+	\[
+	\text{CVILLIQ}_i = \frac{\sigma(\text{ILLIQ}_{it})}{\overline{\text{ILLIQ}}_i}
+	\]
+	
+	codes：
+	\begin{lstlisting}
+		def CVILLIQ(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			update t set ILLIQ = iif(TradeValue > 0, abs(ret)/ TradeValue, NULL) context by SecurityID, TradeDate
+			update t set CVILLIQ = iif(mavg(ILLIQ, n) > 0,mstd(ILLIQ, n)/mavg(ILLIQ, n), NULL) context by SecurityID, TradeDate
+			return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+			"CVILLIQ_" + string(n) + "min" as factorname, 
+			CVILLIQ as value
+			from t 
+			order by TradeDate,SecurityID,MinuteStart)
+	\end{lstlisting}
+			
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/4f1ab78a03ac040c6b2e96edefa9607d"}
+		\caption{}
+		\label{fig:4f1ab78a03ac040c6b2e96edefa9607d}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                 & IRIC               & rankIC             & rankIRIC           \\ \hline
+			-0.000407253696191 & -0.007969214485051 & -0.007934460465309 & -0.132140775919968 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn         & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}        &  &  &  \\ \cline{1-4}
+			0.001096471291575   & 0.013903739938177  & 0.001195266937823    & \multicolumn{1}{c|}{-0.005793034629343} &  &  &  \\ \cline{1-4}
+			annSharpeRatio      & MaxDrawdown        & WinRate              &                                         &  &  &  \\ \cline{1-3}
+			-13.466665522545412 & -0.978523938140314 & 0.481876332622601    &                                         &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{12. high-price amplitude}
+	formula:
+	\[ {V_{high}}(\lambda)=\frac{1}{N\mathrm{×}\lambda}\sum_{t\in{S_{high}}}{\left ({\frac{High_t}{Low_t}}-1\right )} \]
+	codes：
+	\begin{lstlisting}
+		def AMP_HIGH(pricedata, n, lam = 0.25){
+			t = select *, iif(Low>0, High/Low-1, NULL) as amp from pricedata
+			update t set amp_high = 1/(n*lam)*msumTopN(amp, Close, window=n, top=int(n*lam), ascending=false) context by SecurityID, TradeDate
+			return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+			"AMP_HIGH_" + string(n) + "min" + "_"+string(lam) +"lam" as factorname, 
+			amp_high as value
+			from t 
+			order by TradeDate,SecurityID,MinuteStart)
+		}   
+	\end{lstlisting}
+	
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/39fef77e4c06854318ac4791c6792234"}
+		\caption{}
+		\label{fig:39fef77e4c06854318ac4791c6792234}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                 & IRIC               & rankIC             & rankIRIC         \\ \hline
+			-0.008741440819906 & -0.125299711263485 & -0.009042505526169 & -0.1056515145934 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn         & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cline{1-4}
+			0.030450910578683   & 0.459298286786739  & 0.003285216426365    & \multicolumn{1}{c|}{0.117658546015309} &  &  &  \\ \cline{1-4}
+			annSharpeRatio      & MaxDrawdown        & WinRate              &                                        &  &  &  \\ \cline{1-3}
+			130.675800638715315 & -2.911151766315874 & 0.538293216630197    &                                        &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{13. low-price amplitude}
+	formula:
+	\[ {V_{low}}(\lambda)=\frac{1}{N\mathrm{×}\lambda}\sum_{t\in{S_{low}}}{\left ({\frac{High_t}{Low_t}}-1\right )} \]
+	
+	codes：
+	\begin{lstlisting}
+		def AMP_LOW(pricedata, n, lam = 0.25){
+			t = select *, iif(Low>0, High/Low-1, NULL) as amp from pricedata
+			update t set amp_low  = 1/(n*lam)*msumTopN(amp, Close, window=n, top=int(n*lam), ascending=true) context by SecurityID, TradeDate
+			return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+			"AMP_LOW_" + string(n) + "min" + "_"+string(lam) +"lam" as factorname, 
+			amp_low as value
+			from t 
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/601afbca373af47e7d82aed809e603d3"}
+		\caption{}
+		\label{fig:601afbca373af47e7d82aed809e603d3}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC               & IRIC              & rankIC            & rankIRIC          \\ \hline
+			0.01228737504628 & 0.187844513763267 & 0.018029374906186 & 0.210942860726347 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn         & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cline{1-4}
+			0.039920794945041   & 0.637582959418432  & 0.003175916028299    & \multicolumn{1}{c|}{0.177754216502936} &  &  &  \\ \cline{1-4}
+			annSharpeRatio      & MaxDrawdown        & WinRate              &                                        &  &  &  \\ \cline{1-3}
+			191.309516374054368 & -0.547555407370991 & 0.585683297180043    &                                        &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{14. amplitude quantile difference}
+	formula:
+\[ 	V={V_{high}}-{V_{low}} \]
+	
+	codes：
+	\begin{lstlisting}
+		def AMP_range(pricedata, n, lam = 0.25){
+			t = select *, iif(Low>0, High/Low-1, NULL) as amp from pricedata
+			update t set amp_high = 1/(n*lam)*msumTopN(amp, Close, window=n, top=int(n*lam), ascending=false) context by SecurityID, TradeDate
+			update t set amp_low  = 1/(n*lam)*msumTopN(amp, Close, window=n, top=int(n*lam), ascending=true) context by SecurityID, TradeDate
+			return (select TradeDate, SecurityID, MinuteStart + 1 AS MinuteStart, 
+			"AMP_range_" + string(n) + "min" + "_" + string(lam) + "lam" as factorname, 
+			(amp_high - amp_low) as value
+			from t 
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+		
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/5a4bd6c619340091fee41fdc2e9ad647"}
+		\caption{}
+		\label{fig:5a4bd6c619340091fee41fdc2e9ad647}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                 & IRIC               & rankIC             & rankIRIC           \\ \hline
+			-0.025691048085176 & -0.591083338522417 & -0.030791817831075 & -0.814921584320837 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn         & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}      &  &  &  \\ \cline{1-4}
+			0.04902464131072    & 0.827678029306484  & 0.004877584093287    & \multicolumn{1}{c|}{0.19491449111844} &  &  &  \\ \cline{1-4}
+			annSharpeRatio      & MaxDrawdown        & WinRate              &                                       &  &  &  \\ \cline{1-3}
+			163.539574931021775 & -1.055456937281839 & 0.621848739495798    &                                       &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{15. Idiosyncratic volatility: upside plus downside volatility}
+	codes：
+	\begin{lstlisting}
+		def VOL_upd_log_1minret(pricedata, n){
+			t = select *, log(Close) as log_close from pricedata where Close > 0 order by SecurityID, TradeDate, MinuteStart
+			// 计算对数收益率
+			update t set ret = log_close - prev(log_close) context by SecurityID, TradeDate
+			update t set up_VOL =moving(
+			defg(returns){
+				mean_return = avg(returns)
+				up_rets = max(returns - mean_return, 0)
+				return sqrt(sum2(up_rets) / (size(returns) - 1))
+			}, ret, n
+			) context by SecurityID, TradeDate
+			update t set down_VOL =moving(
+			defg(returns){
+				mean_return = avg(returns)
+				down_rets = min(returns - mean_return, 0)
+				return sqrt(sum2(down_rets) / (size(returns) - 1))
+			}, ret, n
+			) context by SecurityID, TradeDate
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"VOL_upd_log_1minret_" + string(n) + "min" as factorname,
+			up_VOL + down_VOL as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/121554424a6c5769964fa130cd83b506"}
+		\caption{}
+		\label{fig:121554424a6c5769964fa130cd83b506}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                 & IRIC               & rankIC             & rankIRIC           \\ \hline
+			-0.001816547435437 & -0.023966894809794 & -0.002430031637713 & -0.028287114921206 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn        & AnnualizedReturn     & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cline{1-4}
+			0.019918775230866  & 0.282113257762077    & 0.003071212911754    & \multicolumn{1}{c|}{0.066264902229341} &  &  &  \\ \cline{1-4}
+			annSharpeRatio     & MaxDrawdown          & WinRate              &                                        &  &  &  \\ \cline{1-3}
+			82.089150119561381 & -288.244971900092423 & 0.490405117270789    &                                        &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{16. enhanced volatility：Parkinson}
+	formula:
+	\[
+	\sigma_p = \frac{1}{4N \ln 2} \sum_{i=1}^N \left( \ln\frac{h_i}{l_i} \right)^2
+	\]
+	
+	
+	codes：
+	\begin{lstlisting}
+		def VOL_Parkinson(pricedata, n){
+			t = select *, iif(Low>0,pow(log(High/Low), 2),NULL) as VOL_P from pricedata 
+			update t set VOL_P = sqrt(msum(VOL_P, n)/(4*n*log(2))) context by TradeDate, SecurityID
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"VOL_Parkinson_" + string(n) + "min" as factorname,
+			VOL_P as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/830060a66dfbfe65bf156abfab52e561"}
+		\caption{}
+		\label{fig:830060a66dfbfe65bf156abfab52e561}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \hline
+			0.001090843408515 & 0.014428207662356 & 0.001225569325559 & 0.013821741018326 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn        & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cline{1-4}
+			0.007173493395778  & 0.094243620594227  & 0.002509948574136    & \multicolumn{1}{c|}{0.017495742184579} &  &  &  \\ \cline{1-4}
+			annSharpeRatio     & MaxDrawdown        & WinRate              &                                        &  &  &  \\ \cline{1-3}
+			25.595592378353792 & -0.679197661494227 & 0.514893617021277    &                                        &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{17. enhanced volatility：Garman-Klass}
+	formula:
+	\[\sigma_{GK} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} \left[ \frac{1}{2} \left( \ln \frac{h_i}{l_i} \right)^2 - (2\ln 2 - 1)\left( \ln \frac{c_i}{o_i} \right)^2 \right]}\]
+	
+	codes：
+	\begin{lstlisting}
+		def VOL_GK(pricedata, n){
+			t = select *, iif(Low>0 and Open>0, pow(log(High/Low), 2) / 2 - (2*log(2)-1)*pow(log(Close/Open), 2),NULL) 
+			as VOL_GK from pricedata
+			update t set VOL_GK = sqrt(msum(VOL_GK, n) / n) context by TradeDate, SecurityID
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"VOL_GK_" + string(n) + "min" as factorname,
+			VOL_GK as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/1f4cbada6924f8a9128718f837c07b62"}
+		\caption{}
+		\label{fig:1f4cbada6924f8a9128718f837c07b62}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                & IRIC             & rankIC            & rankIRIC          \\ \hline
+			0.002221512628479 & 0.03154365045568 & 0.003930348227372 & 0.044452589489863 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|lllll}
+			\cline{1-4}
+			TotalReturn       & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  &  \\ \cline{1-4}
+			0.012014249777425 & 0.162389046241306  & 0.002370920870437    & \multicolumn{1}{c|}{0.037830422844606} &  &  &  &  \\ \cline{1-4}
+			annSharpeRatio    & MaxDrawdown        & WinRate              &                                        &  &  &  &  \\ \cline{1-3}
+			55.83866078874221 & -0.491767013435117 & 0.512765957446809    &                                        &  &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{18. enhanced volatility：Rogers-Satchell}
+	formula:
+	\[\sigma_{RS} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} \left[ \left( \ln \frac{h_i}{c_i} \right)\left( \ln \frac{h_i}{o_i} \right) + \left( \ln \frac{l_i}{c_i} \right)\left( \ln \frac{l_i}{o_i} \right) \right]}\]
+	
+	codes：
+	\begin{lstlisting}
+		def VOL_RS(pricedata, n){
+			t = select *, iif(Close>0 and Open>0, log(High/Close)*log(High/Open)+log(Low/Close)*log(Low/Open),NULL)
+			as VOL_RS from pricedata
+			update t set VOL_RS = sqrt(msum(VOL_RS, n)/n) context by TradeDate,SecurityID
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"VOL_RS_" + string(n) + "min" as factorname,
+			VOL_RS as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+		
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/1cd2436c4c1c069c2b97713b1e769f4e"}
+		\caption{}
+		\label{fig:1cd2436c4c1c069c2b97713b1e769f4e}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \hline
+			0.003068656096179 & 0.051267359651756 & 0.005741338177305 & 0.068782419067128 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn       & AnnualizedReturn  & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cline{1-4}
+			0.008009992176545 & 0.105750001549241 & 0.00129711978076     & \multicolumn{1}{c|}{0.028823127631421} &  &  &  \\ \cline{1-4}
+			annSharpeRatio    & MaxDrawdown       & WinRate              &                                        &  &  &  \\ \cline{1-3}
+			58.39861720779514 & -0.74072373430301 & 0.52801724137931     &                                        &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{19. enhanced volatility：Yang-Zhang}
+	formula:
+	\[\sigma_{YZ} = \sqrt{\sigma_0^2 + k\sigma_c^2 + (1-k)\sigma_{RS}^2}\]
+	
+	\[\sigma_0^2 = \sum_{i=1}^{N} \ln \frac{o_i}{c_{i-1}}, \quad k = \frac{\alpha}{1+\alpha + \frac{n+1}{n-1}}, \quad \sigma_c^2 = \sum_{i=1}^{N} \ln \frac{c_i}{o_{i-1}}\]
+	
+	codes：
+	\begin{lstlisting}
+		def VOL_YZ(pricedata, n, alpha = 0.34){
+			k = alpha / (1+alpha+(n+1)/(n-1))
+			t = select *, iif(Close>0 and Open>0, log(High/Close)*log(High/Open)+log(Low/Close)*log(Low/Open),NULL)
+			as VOL_RS,
+			iif(prev(Close)>0, log(Open/prev(Close)), NULL) as VOL_O,
+			iif(prev(Open)>0, log(Close/prev(Open)), NULL) as VOL_C
+			from pricedata context by TradeDate,SecurityID
+			update t set VOL_RS = msum(VOL_RS, n)/n context by TradeDate,SecurityID
+			update t set VOL_YZ = sqrt( msum(VOL_O, n) + k*msum(VOL_C,n) + (1-k)*VOL_RS ) context by TradeDate,SecurityID
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"VOL_YZ_" + string(n) + "min" + "_" + string(alpha) + "alpha" as factorname,
+			VOL_YZ as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/d1d0ff291eafd1db44ef08ad335d7188"}
+		\caption{}
+		\label{fig:d1d0ff291eafd1db44ef08ad335d7188}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                 & IRIC               & rankIC             & rankIRIC          \\ \hline
+			-0.021579647454028 & -0.290074027800272 & -0.002731633995649 & -0.02633927040601 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn         & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}       &  &  &  \\ \cline{1-4}
+			0.053213578627316   & 0.921795913109852  & 0.006695220037408    & \multicolumn{1}{c|}{0.190879825345991} &  &  &  \\ \cline{1-4}
+			annSharpeRatio      & MaxDrawdown        & WinRate              &                                        &  &  &  \\ \cline{1-3}
+			133.198895350278718 & -1.485631674254195 & 0.604255319148936    &                                        &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	\subsection*{20. enhanced volatility：Cho-Free}
+	formula:
+\[
+\sigma_{CF} = \sqrt{\frac{2\mu\delta}{\ln(\delta + \hat{\mu}\tau_n) - \ln(\delta - \hat{\mu}\tau_n)}}
+\]
+\[
+\delta = \ln(1 + 1/8), \quad \hat{\mu} = \frac{\frac{1}{N}\sum_{i=1}^{N}\Delta c_i}{2\delta}
+\]
+\[
+\frac{1}{N}\sum_{i=1}^{N}\Delta c_i
+\]
+
+	codes：
+	\begin{lstlisting}
+		def VOL_CF(pricedata, n, delta = 8){
+			deltad = log(1+1/delta)
+			t = select *, mavg(Close-prev(Close), n) as deltaC from pricedata context by TradeDate,SecurityID
+			update t set mu = deltaC/(2*deltad), tao = deltaC/n
+			update t set VOL_CF = sqrt(2*mu*deltad/(log(deltad + mu*tao)-log(deltad - mu*tao)))
+			return (select
+			TradeDate,
+			SecurityID,
+			MinuteStart + 1 AS MinuteStart,
+			"VOL_CF_" + string(n) + "min" + "_" + string(delta) + "delta" as factorname,
+			VOL_CF as value
+			from t
+			order by TradeDate,SecurityID,MinuteStart)
+		}
+	\end{lstlisting}
+		
+	PNL:
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.7\linewidth]{"PNL plot/1b040249fbd1681bcba552bca635e2a4"}
+		\caption{}
+		\label{fig:1b040249fbd1681bcba552bca635e2a4}
+	\end{figure}
+	
+	IC:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|c|}
+			\hline
+			IC                & IRIC              & rankIC            & rankIRIC          \\ \hline
+			0.005107156745573 & 0.068283658188466 & 0.011426911669959 & 0.114999672362906 \\ \hline
+		\end{tabular}
+	\end{table}
+	
+	Per:
+	\begin{table}[H]
+		\begin{tabular}{|c|c|c|llll}
+			\cline{1-4}
+			TotalReturn          & AnnualizedReturn   & AnnualizedVolatility & \multicolumn{1}{c|}{SharpeRatio}        &  &  &  \\ \cline{1-4}
+			-0.033890963357296   & -0.352366330465329 & 0.001442417257177    & \multicolumn{1}{c|}{-0.102596262108021} &  &  &  \\ \cline{1-4}
+			annSharpeRatio       & MaxDrawdown        & WinRate              &                                         &  &  &  \\ \cline{1-3}
+			-265.087185114296516 & 0                  & 0.443974630021142    &                                         &  &  &  \\ \cline{1-3}
+		\end{tabular}
+	\end{table}
+	
+	
+	\section*{\centering Appendix1：Daily Trading}
+	\begin{lstlisting}
+		alphaName = 'IntraVWAPClose'
+		priceData = select * from loadTable("dfs://priceData", "DailyPrice")
+		resultTABLE = select * from loadTable("dfs://factorDB", alphaName)
+		
+		// 定义日度回测评价函数（开盘买入，收盘卖出）
+		def evaluateFactorDaily(factorData, priceData) {
+			/*
+			日度回测评价函数
+			参数：
+			factorData: 因子数据表，包含SecurityID, TradeDate, Alpha
+			priceData: 价格数据表，包含SecurityID, TradeDate, OpenPrice, ClosePrice
+			逻辑：使用前一日因子值，当日开盘买入，收盘卖出
+			*/
+			
+			// 1. 数据预处理 - 将因子数据滞后一天
+			allTradeDates = [2023.08.14, 2023.08.15, 2023.08.16, 2023.08.17, 2023.08.18, 2023.08.21, 2023.08.22, 2023.08.23, 2023.08.24, 2023.08.25, 2023.08.28, 2023.08.29, 2023.08.30, 2023.08.31, 2023.09.01, 2023.09.04, 2023.09.05, 2023.09.06, 2023.09.07, 2023.09.08]
+			// 创建滞后因子表
+			factorLag = select 
+			SecurityID,
+			// 使用下一个交易日作为滞后日期
+			allTradeDates[find(allTradeDates, TradeDate) + 1] as TradeDate,
+			Alpha as LagAlpha
+			from resultTABLE
+			where find(allTradeDates, TradeDate) < size(allTradeDates) - 1  // 确保不是最后一个交易日
+			
+			// 2. 合并滞后因子和价格数据
+			mergedData = select 
+			f.SecurityID, 
+			f.TradeDate, 
+			f.LagAlpha as Alpha,
+			p.OpenPrice as BuyPrice,    // 开盘价买入
+			p.ClosePrice as SellPrice   // 收盘价卖出
+			from factorLag as f 
+			left join priceData as p 
+			on f.SecurityID = p.SecurityID and f.TradeDate = p.TradeDate
+			where isValid(p.OpenPrice) and isValid(p.ClosePrice) and p.OpenPrice > 0 and p.ClosePrice > 0
+			
+			// 计算当日收益率（开盘买入，收盘卖出）
+			mergedData = select 
+			SecurityID, 
+			TradeDate, 
+			Alpha,
+			BuyPrice,
+			SellPrice,
+			(SellPrice - BuyPrice) / BuyPrice as DailyReturn
+			from mergedData
+			where (not isNull(Alpha) and Alpha != 0) or (((SellPrice-BuyPrice)/BuyPrice) != 0)
+			
+			// 3. 因子分层分析
+			// 按交易日分组，对滞后Alpha因子进行5分位分层
+			layeredData = select 
+			SecurityID,
+			TradeDate,
+			Alpha,
+			DailyReturn,
+			BuyPrice,
+			SellPrice,
+			rank(Alpha, percent=true) as FactorRank
+			from mergedData
+			context by TradeDate
+			
+			
+			// 划分5个分层
+			layeredData = select 
+			SecurityID,
+			TradeDate,
+			Alpha,
+			DailyReturn,
+			BuyPrice,
+			SellPrice,
+			case 
+			when FactorRank <= 0.2 then 1  // 最低分组
+			when FactorRank <= 0.4 then 2
+			when FactorRank <= 0.6 then 3
+			when FactorRank <= 0.8 then 4
+			else 5                          // 最高分组
+			end as Quintile
+			from layeredData
+			
+			return layeredData
+		}
+		
+		// 分层收益计算函数 
+		def calculateQuintileReturns(layeredData) {
+			
+			// 计算各层等权组合日收益
+			quintileDailyReturns = select
+			TradeDate,
+			Quintile,
+			count(SecurityID) as StockCount,
+			avg(DailyReturn) as PortfolioReturn,  // 等权组合收益
+			std(DailyReturn) as PortfolioStd,
+			avg(Alpha) as AvgAlpha
+			from layeredData
+			group by TradeDate, Quintile
+			order by TradeDate, Quintile
+			
+			// 计算各层累计收益
+			quintileCumulative = select
+			Quintile,
+			cumsum(PortfolioReturn) as CumulativeReturn
+			from quintileDailyReturns
+			context by Quintile
+			
+			return quintileDailyReturns
+		}
+		
+		// 多空组合分析函数 
+		def calculateLongShortPerformance(quintileDailyReturns) {
+			/*
+			计算多空组合绩效
+			做多第1组（最低因子值），做空第5组
+			*/
+			
+			// 提取多空组合成分
+			longShortData = select
+			TradeDate,
+			Quintile,
+			PortfolioReturn as GroupReturn
+			from quintileDailyReturns
+			where Quintile = 1 or Quintile = 5
+			
+			// 计算多空组合日收益（做多第5组，做空第1组）
+			longShortPortfolio = select
+			TradeDate,
+			sum(case when Quintile = 5 then GroupReturn else -GroupReturn end) as LongShortReturn
+			from longShortData
+			group by TradeDate
+			order by TradeDate
+			
+			// 计算多空组合绩效指标
+			lsStats = select
+			avg(LongShortReturn) * 252 as AnnualReturn,
+			std(LongShortReturn) * sqrt(252) as AnnualStd,
+			avg(LongShortReturn) / std(LongShortReturn) * sqrt(252) as AnnualSharpe,
+			count(LongShortReturn) as TradingDays,
+			sum(LongShortReturn < 0) / count(LongShortReturn) as LossRatio
+			from longShortPortfolio
+			
+			return longShortPortfolio,lsStats
+		}
+		
+		// IC分析函数 
+		def calculateICAnalysis(layeredData) {
+			
+			// 计算每日IC值（因子与当日收益的相关性）
+			icDaily = select
+			TradeDate,
+			corr(Alpha, DailyReturn) as IC,
+			cov(Alpha, DailyReturn) as IC_Cov,
+			count(SecurityID) as StockCount
+			from layeredData
+			group by TradeDate
+			order by TradeDate
+			
+			// 计算IC统计
+			icStats = select
+			avg(IC) as MeanIC,
+			std(IC) as StdIC,
+			avg(IC) / std(IC) as IC_IR,  // IC信息比率
+			count(IC) as ICTestDays,
+			sum(IC > 0) / count(IC) as IC_PositiveRatio,
+			sum(abs(IC) > 0.02) / count(IC) as SignificantRatio  // IC绝对值大于2%的比例
+			from icDaily
+			
+			return icDaily,icStats
+		}
+		
+		
+		
+		// ==================== 执行回测评价 ====================
+		try {
+			// 执行日度回测评价
+			layeredData = evaluateFactorDaily(resultTABLE, priceData)
+			print("日度回测数据准备完成，共 " + string(size(layeredData)) + " 条记录")
+			
+			// 计算分层收益
+			quintileResults = calculateQuintileReturns(layeredData)
+			
+			// 计算多空组合绩效
+			longShortReturns, performanceStats = calculateLongShortPerformance(quintileResults)
+			
+			// 计算IC分析
+			icDaily,icStats = calculateICAnalysis(layeredData)
+			
+			print("日度回测评价计算完成")
+		} catch (ex) {
+			print("日度回测评价执行错误: " + ex)
+		}
+	\end{lstlisting}
+	
+	\section*{\centering Appendix2：Minute-frequency Trading}
+	\subsection*{1. database and table}
+	\begin{lstlisting}
+		/* 1. 存放处理后的数据，例如k线、个股收益 */
+		create database "dfs://cookedDB"
+		partitioned by VALUE(2023.08.14..2023.09.14), HASH([SYMBOL,50])
+		engine = "TSDB"
+		
+		/* 1.1 分钟K线表 */
+		create table "dfs://cookedDB".'min_k_line'(
+		TradeDate DATE,
+		SecurityID SYMBOL,
+		MinuteStart MINUTE,
+		Open DOUBLE,
+		Close DOUBLE,
+		High DOUBLE,
+		Low DOUBLE,
+		Volume DOUBLE,
+		TradeValue DOUBLE
+		)
+		partitioned by TradeDate, SecurityID
+		sortColumns = ['SecurityID','TradeDate','MinuteStart']
+		keepDuplicates=ALL
+		
+		
+		/* 2. 存放计算得到的因子数据 */
+		factornames = ['SVOL_10','DSVOL_10']
+		create database "dfs://FactorDB"
+		partitioned by VALUE(2023.08.14..2023.09.14), VALUE(factornames)
+		engine = "TSDB"
+		
+		/* 2.1 因子原始值表 */
+		create table "dfs://FactorDB".'factor_minute'(
+		TradeDate DATE,
+		SecurityID SYMBOL,
+		MinuteStart MINUTE,
+		factorname STRING,
+		value DOUBLE
+		)
+		partitioned by TradeDate, factorname
+		sortColumns = ['SecurityID','TradeDate','MinuteStart']
+		keepDuplicates=ALL
+		
+		/* 2.2 因子暴露表 */
+		create table "dfs://FactorDB"."exposure_minute"(
+		TradeDate DATE,
+		SecurityID SYMBOL,
+		MinuteStart MINUTE,
+		factorname STRING,
+		exposure DOUBLE,
+		neutral_type STRING
+		)
+		partitioned by TradeDate, factorname
+		sortColumns = ['SecurityID','TradeDate','MinuteStart']
+		keepDuplicates=ALL
+		
+		/* 2.3 因子表现表 */
+		create table "dfs://FactorDB"."performance_minute"(
+		factorname STRING,
+		neutral_type STRING,
+		startDate DATE,
+		endDate DATE,
+		holding_minutes INT,
+		nGroups INT,
+		weightMethod STRING,
+		costrate DOUBLE,
+		rf DOUBLE,
+		IC DOUBLE,
+		IRIC DOUBLE,
+		rankIC DOUBLE,
+		rankIRIC DOUBLE,
+		TotalReturn DOUBLE,
+		AnnualizedReturn DOUBLE,
+		AnnualizedVolatility DOUBLE,
+		SharpeRatio DOUBLE,
+		annSharpeRatio DOUBLE,
+		MaxDrawdown DOUBLE,
+		WinRate DOUBLE
+		)
+		sortColumns = ['factorname','neutral_type','startDate','endDate']
+	\end{lstlisting}
+	
+	\subsection*{2. generate minute K-lines}
+	\begin{lstlisting}
+		cuhkdb = database("dfs://cuhkDB")
+		filtered_data =
+		SELECT 
+		TradeDate,
+		TradeTime,
+		SecurityID,
+		minute(TradeTime) AS MinuteStart, 
+		LastPrice,
+		TotalVolumeTrade,
+		TotalValueTrade
+		FROM cuhkdb.cuhk_snapshot
+		WHERE TradingPhaseCode=="TRADE"
+		order by TradeDate, TradeTime, SecurityID
+		
+		cookeddb = database("dfs://cookedDB")
+		cookeddb.min_k_line.append!(
+		SELECT TradeDate,
+		SecurityID,
+		MinuteStart,
+		first(LastPrice) AS Open,
+		last(LastPrice) AS Close, 
+		max(LastPrice) AS High,
+		min(LastPrice) AS Low,
+		last(TotalVolumeTrade)-first(TotalVolumeTrade) AS Volume,
+		last(TotalValueTrade)-first(TotalValueTrade) AS TradeValue
+		FROM filtered_data
+		GROUP BY TradeDate, SecurityID, MinuteStart
+		ORDER BY TradeDate, SecurityID, MinuteStart
+		)
+		
+	\end{lstlisting}
+	
+	\subsection*{3.load factor}
+	\begin{lstlisting}
+		pricedata = loadTable("dfs://cookedDB", "min_k_line")
+		
+		factorload = call(VOL_CF, pricedata, 10)
+		if(factorload.factorname[0] in (select distinct factorname from loadTable("dfs://FactorDB", "factor_minute"))){
+			print("因子 " + factorload.factorname[0] + " 已存在于因子表中，跳过添加。")
+		}
+		else{
+			upsert!(loadTable("dfs://FactorDB", "factor_minute"), factorload, KeyColNames=`TradeDate`SecurityID`MinuteStart`factorname)
+			print("因子 " + factorload.factorname[0] + " 已成功添加到因子表中。")
+		}
+	\end{lstlisting}
+	
+	\subsection*{4. process factor}
+	\begin{lstlisting}
+		/* 对单个因子、单个截面做处理,分位数0.01-0.99去极值，zscore标准化 */
+		def processFactor(mutable valueVec, winsorizeLower=1, winsorizeUpper=99,neutral_type="winsorized_zscore") {
+			/* 1. 去空值 */
+			valueVec_mask = isNull(valueVec)
+			valueVec = valueVec[not valueVec_mask]
+			
+			if(neutral_type == "winsorized_zscore") {
+				/* 2. 去极值 */
+				lower, upper = percentile(valueVec, winsorizeLower), percentile(valueVec, winsorizeUpper)
+				valueVec = clip(valueVec, lower, upper)
+				
+				/* 3. Z-score */
+				mu = avg(valueVec)
+				sigma = std(valueVec)
+				if(sigma == 0.0) return take(0.0, size(valueVec))
+				return (valueVec - mu) / sigma 
+			}
+		}
+		
+		/* 将因子暴露存入exposure_minute表 */
+		def saveFactorExposureminute(fname, type="winsorized_zscore") 
+		{
+			/* 读取因子数据 */
+			factorData = select *, type as neutral_type from database("dfs://FactorDB").factor_minute 
+			where factorname = fname and value is not null
+			
+			/* 按TradeDate,MinuteStart分组处理 */
+			processedData = select 
+			TradeDate,
+			SecurityID,
+			MinuteStart,
+			factorname,
+			processFactor(value) as exposure,
+			neutral_type
+			from factorData
+			context by TradeDate, MinuteStart
+			
+			/* 保存结果到exposure_minute表 */
+			upsert!(database("dfs://FactorDB").exposure_minute,(
+			select 
+			TradeDate,
+			SecurityID,
+			MinuteStart,
+			factorname,
+			exposure,
+			neutral_type
+			from processedData
+			))
+			
+			print("已处理新因子：" + fname + ",type:" + type)
+		}
+		
+		/* 将未按neutral_type处理的因子值处理并存入exposure_minute表 */
+		factor_minute   = loadTable("dfs://FactorDB", "factor_minute")
+		exposure_minute = loadTable("dfs://FactorDB", "exposure_minute")
+		
+		fm_set = select distinct factorname from factor_minute 
+		ep_set = select distinct factorname from exposure_minute where neutral_type = "winsorized_zscore"
+		missing_factors = fm_set.factorname[not fm_set.factorname in ep_set.factorname]
+		if(size(missing_factors) > 0){
+			print("待处理因子列表：")
+			print(missing_factors)
+			for(fname in missing_factors){
+				saveFactorExposureminute(fname, "winsorized_zscore")
+			}
+		}
+		else{
+			print("无待处理因子")
+		}
+	\end{lstlisting}
+	
+	\subsection*{5. back testing}
+	\begin{lstlisting}
+		// -------------------------------
+		fname              = "VOL_CF_10min_8delta"        // 因子名
+		type               = "winsorized_zscore"        // 处理类型
+		holding_minutes    = 10     // 持仓分钟
+		nGroups            = 5                    // 分组数
+		weightMethod       = "equal"                // 权重方案： "rank" / "equal" / "exposure"
+		costrate           = 0.000                    // 单边手续费
+		universeFilterFunc = NULL                  // 可选：自定义函数筛选股票（NULL 表示不筛选）
+		rf = 0.03                                  // 无风险利率
+		startDate          = 2023.08.14            // 回测开始日期
+		endDate            = 2023.09.14            // 回测结束日期
+		// -------------------------------
+		
+		/* 载入因子表和分钟k线 */
+		exposureTbl = loadTable("dfs://FactorDB", "exposure_minute")   
+		priceTbl    = loadTable("dfs://cookedDB", "min_k_line")
+		
+		/* 取出目标因子并生成买入时间entry_dt,卖出时间exit_dt */
+		exposure = select TradeDate, SecurityID, MinuteStart, factorname,exposure, neutral_type 
+		from exposureTbl 
+		where TradeDate between startDate and endDate and factorname = fname and neutral_type = type   // 根据 factorName 过滤
+		
+		exposure = select *, concatDateTime(TradeDate, second(time(MinuteStart))) as entry_dt from exposure
+		exposure = select *, concatDateTime(TradeDate, second(time(MinuteStart+holding_minutes-1))+59) as exit_dt from exposure
+		// 过滤掉开盘前、收盘后无法交易的时点
+		exposure = select * from exposure where minute(exit_dt) <= 14:59m  and minute(entry_dt) >= 09:30m
+		// 补充k线每一窗口的开始、结束时点
+		price = select *, concatDateTime(TradeDate, second(time(MinuteStart))) as Open_dt, concatDateTime(TradeDate, second(time(MinuteStart+1))-1) as Close_dt from priceTbl
+		// 因子表连接价格表，获取买入价和卖出价
+		// entry price join
+		entryJoin = select a.TradeDate, a.SecurityID, a.entry_dt, a.exit_dt, a.exposure, a.neutral_type
+		, p.Open  as entry_open
+		from exposure  a
+		left join price  p on a.TradeDate = p.TradeDate and a.SecurityID = p.SecurityID and a.entry_dt = p.Open_dt
+		// exit price join
+		fullJoin = select j.*, p.Close as exit_close
+		from entryJoin  j
+		left join price  p on j.TradeDate = p.TradeDate and j.SecurityID = p.SecurityID and j.exit_dt = p.Close_dt
+		// 计算向前收益
+		fullJoin = select *, 
+		iif(isNull(entry_open) or isNull(exit_close) or entry_open==0, NULL, (exit_close/entry_open - 1.0)) as fwdReturn
+		from fullJoin
+		
+		/* IC */
+		ICTbl = select entry_dt, 
+		corr(exposure, fwdReturn)        as IC, 
+		corr(rank(exposure), rank(fwdReturn)) as rankIC,
+		count(exposure) as N
+		from fullJoin
+		group by entry_dt
+		// IC统计数据
+		ICStats = select 
+		avg(IC)       as meanIC,
+		std(IC)     as stdIC,
+		skew(IC)    as skewIC,
+		kurtosis(IC) as kurtosisIC,
+		avg(IC) / std(IC) * sqrt(count(IC)) as tStatIC,
+		avg(IC) / std(IC) as irIC,
+		avg(rankIC)      as meanrankIC,
+		std(rankIC)    as stdrankIC,
+		skew(rankIC)   as skewrankIC,
+		kurtosis(rankIC) as kurtosisrankIC,
+		avg(rankIC) / std(rankIC) * sqrt(count(rankIC)) as tStatrankIC,
+		avg(rankIC) / std(rankIC) as irrankIC,
+		count(entry_dt)      as numPeriods
+		from ICTbl
+		
+		ICmain = select  meanIC as IC, irIC as IRIC, meanrankIC as rankIC, irrankIC as rankIRIC from ICStats
+		
+		/* 分组收益率计算 */
+		// 将每期股票按因子值分组
+		grouped = select TradeDate, SecurityID, entry_dt, exposure, fwdReturn, rank(exposure,groupNum=nGroups) as group 
+		from fullJoin
+		context by entry_dt
+		// 每期的组内收益率统计
+		groupedSummary = select entry_dt, group, 
+		avg(fwdReturn) as meanReturn, 
+		std(fwdReturn) as stdReturn, 
+		count(fwdReturn) as N
+		from grouped
+		group by entry_dt, group
+		order by entry_dt, group
+		// 各组收益率统计         
+		groupedStats = select 
+		group,
+		avg(meanReturn) as avgReturnPerGroup,
+		std(meanReturn) as stdReturnPerGroup
+		from groupedSummary
+		group by group
+		
+		/* 计算多空组合收益:long-short等权重 */
+		if(ICStats.meanIC > 0){
+			lsSpread = select t.entry_dt, (t.meanReturn - b.meanReturn) as longShort
+			from (select entry_dt, meanReturn, group from groupedSummary where group = nGroups-1) t
+			join (select entry_dt, meanReturn, group from groupedSummary where group = 1) b
+			on t.entry_dt = b.entry_dt
+		}
+		else{
+			lsSpread = select t.entry_dt, (t.meanReturn - b.meanReturn) as longShort
+			from (select entry_dt, meanReturn, group from groupedSummary where group = 1) t
+			join (select entry_dt, meanReturn, group from groupedSummary where group = nGroups-1) b
+			on t.entry_dt = b.entry_dt
+		}
+		
+		/* PNL */
+		// 根据 holding_minutes 进行收益率采样
+		if(holding_minutes > 1){
+			PNL = select * from
+			(select *,row_number() over (order by entry_dt) as seq
+			from lsSpread )
+			where seq % holding_minutes ==1
+		}
+		else{
+			PNL = select * from
+			(select *,row_number() over (order by entry_dt) as seq
+			from lsSpread )
+			
+		}
+		// 减去交易成本
+		update PNL set longShort = longShort - 2 * costrate
+		// 计算累计收益率和净值
+		PNL = select *, cumprod(1+longShort) - 1 as netret from PNL
+		
+		/* 绩效指标计算 */
+		totalperiods = size(PNL.entry_dt)         // 回测的总 period 数
+		periodsPerDayTbl = select date(entry_dt), count(*) as cnt from PNL group by date(entry_dt) // 每天的 period 数
+		avgPeriodsPerDay = avg(periodsPerDayTbl.cnt)  // 平均每天调仓次数
+		tradingDaysPerYear = 252.0                    // 一年交易日天数
+		periodsPerYear = avgPeriodsPerDay * tradingDaysPerYear // 一年 period 数
+		// 1. 最大回撤
+		nr = PNL.netret 
+		runningMax = nr.cummax()    // 向量的累积最大值（每点之前的最高净值）
+		drawdown = nr / runningMax - 1.0   // 每点的回撤
+		maxDrawdown = min(drawdown)        // 最大回撤
+		// 最大回撤发生时间点
+		idxMaxDD = at(drawdown == maxDrawdown)
+		maxDD_time = iif(size(idxMaxDD)>0, PNL.entry_dt[idxMaxDD], NULL)
+		// 2. 年化
+		meanPeriodReturn = avg(PNL.longShort) // 每期平均收益
+		stdPeriodReturn = std(PNL.longShort)  // 单期收益标准差
+		totalreturn = PNL.netret[totalperiods-1] // 回测时间段总收益率
+		annVol = pow(pow(1+meanPeriodReturn,2)+pow(stdPeriodReturn,2), periodsPerYear)-pow(pow(1+meanPeriodReturn,2),periodsPerYear) // 年化波动率 
+		annReturn = pow(1 + totalreturn, periodsPerYear/totalperiods) - 1.0 // 年化收益率
+		// 3. 夏普比率
+		rfperiod = pow(1 + rf, 1.0/periodsPerYear) - 1.0 // 每期无风险收益率
+		sharpe = (meanPeriodReturn - rfperiod) / stdPeriodReturn
+		annsharpe = (annReturn-rf)/annVol //年化夏普
+		// 4. 胜率
+		winRate = sum(PNL.longShort > 0) * 1.0 / totalperiods
+		// 输出绩效指标
+		performance = table(  totalreturn as TotalReturn,
+		annReturn as AnnualizedReturn,
+		annVol as AnnualizedVolatility,
+		sharpe as SharpeRatio,
+		annsharpe as annSharpeRatio,
+		maxDrawdown as MaxDrawdown,
+		winRate as WinRate )
+		
+		/* 绘图 */
+		plot(PNL.netret, PNL.entry_dt)
+		// plot(ICTbl.spearmanIC, ICTbl.entry_dt)
+		
+		
+		/* 保存因子绩效到因子表现表 */
+		upsert!(loadTable("dfs://FactorDB", "performance_minute"), 
+		(select fname as factorname,
+		type as neutral_type,
+		startDate as startDate,
+		endDate as endDate,
+		holding_minutes as holding_minutes,
+		nGroups as nGroups,
+		weightMethod as weightMethod,
+		costrate as costrate,
+		rf as rf,
+		ICmain.IC as IC,
+		ICmain.IRIC as IRIC,
+		ICmain.rankIC as rankIC,
+		ICmain.rankIRIC as rankIRIC,
+		performance.TotalReturn as TotalReturn,
+		performance.AnnualizedReturn as AnnualizedReturn,
+		performance.AnnualizedVolatility as AnnualizedVolatility,
+		performance.SharpeRatio as SharpeRatio,
+		performance.annSharpeRatio as annSharpeRatio,
+		performance.MaxDrawdown as MaxDrawdown,
+		performance.WinRate as WinRate
+		from performance, ICmain),
+		KeyColNames=['factorname','neutral_type','startDate','endDate','holding_minutes','nGroups','weightMethod','costrate','rf']
+		)
+	\end{lstlisting}
+	
+\end{document}
