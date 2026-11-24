@@ -1,6 +1,6 @@
 # DolphinDB 分钟频量化全流程框架
 
-基于 [DolphinDB](https://www.dolphindb.com/) 构建的分钟频量化研究全流程框架，覆盖从原始行情数据到因子回测的完整链路。
+基于 [DolphinDB](https://www.dolphindb.com/) 构建的分钟频量化研究全流程框架，覆盖从原始行情数据到因子回测的完整链路。详见xzt ddb.pdf 。
 
 ## 项目概览
 
